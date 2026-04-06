@@ -93,8 +93,7 @@ struct MenuContentView: View {
         }
         .padding(14)
         .frame(width: 260)
-        .task {
-            store.start()
+        .onAppear {
             symbolsDraft = store.editableSymbolsText()
         }
     }

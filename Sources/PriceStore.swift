@@ -77,6 +77,8 @@ final class PriceStore: ObservableObject {
         self.visibleSymbols = persistedVisible.isEmpty
             ? Set(resolvedSymbols.prefix(2).map(\.symbol))
             : persistedVisible.intersection(Set(resolvedSymbols.map(\.symbol)))
+
+        start()
     }
 
     var menuBarTitle: String {

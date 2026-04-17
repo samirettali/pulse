@@ -103,13 +103,15 @@ private struct PriceRowView: View {
     let symbol: TrackedSymbol
     let snapshot: PriceSnapshot?
     let isVisibleInMenuBar: Bool
-    let onVisibilityChange: (Bool) -> Void
+    let onVisibilityChange: @MainActor @Sendable (Bool) -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Toggle(isOn: Binding(
                 get: { isVisibleInMenuBar },
-                set: onVisibilityChange
+                set: { isVisible in
+                    onVisibilityChange(isVisible)
+                }
             )) {
                 EmptyView()
             }

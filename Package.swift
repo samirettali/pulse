@@ -11,9 +11,5 @@ let package = Package(
             name: "Coinbar",
             path: "Sources/Coinbar"
         ),
-        .executableTarget(
-            name: "Zonebar",
-            path: "Sources/Zonebar"
-        ),
     ]
 )

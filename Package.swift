@@ -2,18 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "Coinbar",
+    name: "Pulse",
     platforms: [
         .macOS(.v14),
     ],
     targets: [
         .executableTarget(
-            name: "Coinbar",
-            path: "Sources/Coinbar"
-        ),
-        .executableTarget(
-            name: "Zonebar",
-            path: "Sources/Zonebar"
+            name: "Pulse",
+            path: "Sources/Pulse"
         ),
     ]
 )

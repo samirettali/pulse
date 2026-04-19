@@ -164,7 +164,7 @@ struct MenuContentView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 Text(store.displayName(for: symbol))
-                    .font(AppFont.uiFont(size: 12, weight: .semibold))
+                    .font(AppFont.uiFont(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contextMenu {

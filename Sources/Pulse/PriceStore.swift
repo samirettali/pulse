@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSLog
 import SwiftUI
@@ -231,6 +232,7 @@ final class PriceStore: ObservableObject {
 
     private var streamTask: Task<Void, Never>?
     private var clockTask: Task<Void, Never>?
+    private var wakeObserver: NSObjectProtocol?
     private var resolvedBinanceMarkets: [String: BinanceMarket] = [:]
     private var xyzPerpPrevDayPrices: [String: Double] = [:]
     @Published private(set) var now = Date()
@@ -339,6 +341,16 @@ final class PriceStore: ObservableObject {
                     try? await Task.sleep(for: .seconds(1))
                     now = Date()
                 }
+            }
+        }
+
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.restart() }
             }
         }
 

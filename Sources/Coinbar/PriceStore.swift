@@ -222,6 +222,8 @@ final class PriceStore: ObservableObject {
     private let defaults = UserDefaults.standard
     private let symbolsKey = "trackedSymbols"
     private let visibleSymbolsKey = "visibleMenuBarSymbols"
+    private let customNamesKey = "customNames"
+    @Published private(set) var customNames: [String: String] = [:]
 
     private var streamTask: Task<Void, Never>?
     private var clockTask: Task<Void, Never>?
@@ -248,9 +250,24 @@ final class PriceStore: ObservableObject {
         self.visibleSymbols = persistedVisible.isEmpty
             ? Set(resolvedSymbols.prefix(2).map { $0.id })
             : persistedVisible.intersection(Set(resolvedSymbols.map { $0.id }))
+        self.customNames = (defaults.dictionary(forKey: customNamesKey) as? [String: String]) ?? [:]
 
         start()
 
+    }
+
+    func displayName(for symbol: TrackedSymbol) -> String {
+        customNames[symbol.id] ?? symbol.displayName
+    }
+
+    func renameSymbol(id: String, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            customNames.removeValue(forKey: id)
+        } else {
+            customNames[id] = trimmed
+        }
+        defaults.set(customNames, forKey: customNamesKey)
     }
 
     var menuBarTitle: String {
@@ -266,11 +283,12 @@ final class PriceStore: ObservableObject {
                 continue
             }
 
+            let name = displayName(for: symbol)
             let text: String
             if symbol.provider == .time {
-                text = "\(symbol.displayName) \(timeText(for: symbol.symbol))"
+                text = "\(name) \(timeText(for: symbol.symbol))"
             } else {
-                text = "\(symbol.displayName) \(prices[symbol.id]?.formattedPrice ?? "--")"
+                text = "\(name) \(prices[symbol.id]?.formattedPrice ?? "--")"
             }
 
             if result.isEmpty {

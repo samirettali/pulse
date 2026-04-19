@@ -8,6 +8,8 @@ struct MenuContentView: View {
     @State private var addFailed = false
     @State private var isAdding = false
     @State private var draggingSymbol: TrackedSymbol?
+    @State private var renamingId: String? = nil
+    @State private var renameText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -129,7 +131,13 @@ struct MenuContentView: View {
         .padding(14)
         .frame(width: 260)
         .onAppear { store.isMenuOpen = true }
-        .onDisappear { store.isMenuOpen = false }
+        .onDisappear {
+            store.isMenuOpen = false
+            if let id = renamingId {
+                store.renameSymbol(id: id, newName: renameText)
+                renamingId = nil
+            }
+        }
     }
 
     @ViewBuilder
@@ -144,18 +152,35 @@ struct MenuContentView: View {
                     }
                 }
         } else if symbol.provider == .label {
-            Text(symbol.symbol)
-                .font(AppFont.uiFont(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contextMenu {
-                    Button("Delete", role: .destructive) {
-                        store.removeSymbol(id: symbol.id)
+            if renamingId == symbol.id {
+                TransparentTextField(
+                    text: $renameText,
+                    font: NSFont(name: "JetBrainsMono Nerd Font", size: 12) ?? .systemFont(ofSize: 12, weight: .semibold),
+                    color: .secondaryLabelColor,
+                    placeholder: symbol.displayName,
+                    onCommit: { commitRename(for: symbol) },
+                    onCancel: { renamingId = nil }
+                )
+                .frame(maxWidth: .infinity)
+            } else {
+                Text(store.displayName(for: symbol))
+                    .font(AppFont.uiFont(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contextMenu {
+                        Button("Rename") { startRename(for: symbol) }
+                        Divider()
+                        Button("Delete", role: .destructive) {
+                            store.removeSymbol(id: symbol.id)
+                        }
                     }
-                }
+            }
         } else {
             PriceRowView(
                 symbol: symbol,
+                displayName: store.displayName(for: symbol),
+                isRenaming: renamingId == symbol.id,
+                renameBinding: $renameText,
                 snapshot: store.prices[symbol.id],
                 timeText: symbol.provider == .time ? store.timeText(for: symbol.symbol) : nil,
                 timeDiffText: symbol.provider == .time ? store.timeDifferenceText(for: symbol.symbol) : nil,
@@ -163,11 +188,25 @@ struct MenuContentView: View {
                 onVisibilityChange: { isVisible in
                     store.setMenuBarVisibility(for: symbol, isVisible: isVisible)
                 },
+                onRenameRequest: { startRename(for: symbol) },
+                onCommitRename: { commitRename(for: symbol) },
+                onCancelRename: { renamingId = nil },
                 onDelete: {
                     store.removeSymbol(id: symbol.id)
                 }
             )
         }
+    }
+
+    private func startRename(for symbol: TrackedSymbol) {
+        renameText = store.displayName(for: symbol)
+        renamingId = symbol.id
+    }
+
+    private func commitRename(for symbol: TrackedSymbol) {
+        store.renameSymbol(id: symbol.id, newName: renameText)
+        renamingId = nil
+        renameText = ""
     }
 
     private func tryAdd() {
@@ -192,11 +231,18 @@ struct MenuContentView: View {
 
 private struct PriceRowView: View {
     let symbol: TrackedSymbol
+    let displayName: String
+    let isRenaming: Bool
+    let renameBinding: Binding<String>
     let snapshot: PriceSnapshot?
     let timeText: String?
     let timeDiffText: String?
     let isVisibleInMenuBar: Bool
+
     let onVisibilityChange: @MainActor @Sendable (Bool) -> Void
+    let onRenameRequest: @MainActor @Sendable () -> Void
+    let onCommitRename: @MainActor @Sendable () -> Void
+    let onCancelRename: @MainActor @Sendable () -> Void
     let onDelete: @MainActor @Sendable () -> Void
 
     @State private var isMenuOpen = false
@@ -204,8 +250,20 @@ private struct PriceRowView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(symbol.displayName)
-                    .font(AppFont.uiFont(size: 13, weight: .semibold))
+                if isRenaming {
+                    TransparentTextField(
+                        text: renameBinding,
+                        font: NSFont(name: "JetBrainsMono Nerd Font", size: 13) ?? .boldSystemFont(ofSize: 13),
+                        color: .labelColor,
+                        placeholder: symbol.displayName,
+                        onCommit: onCommitRename,
+                        onCancel: onCancelRename
+                    )
+
+                } else {
+                    Text(displayName)
+                        .font(AppFont.uiFont(size: 13, weight: .semibold))
+                }
 
                 Text(symbol.provider.displayName)
                     .font(AppFont.uiFont(size: 10, weight: .regular))
@@ -243,6 +301,7 @@ private struct PriceRowView: View {
                     menu.addItem(ClosureMenuItem(
                         title: isVisibleInMenuBar ? "Hide from Menu Bar" : "Show in Menu Bar"
                     ) { onVisibilityChange(!isVisibleInMenuBar) })
+                    menu.addItem(ClosureMenuItem(title: "Rename") { onRenameRequest() })
                     menu.addItem(.separator())
                     menu.addItem(ClosureMenuItem(title: "Delete", isDestructive: true) { onDelete() })
                 },
@@ -259,6 +318,87 @@ private struct PriceRowView: View {
             if symbol.provider.tradeURL(for: symbol.symbol) != nil {
                 if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
+        }
+    }
+}
+
+private class TransparentNSTextField: NSTextField {
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if let editor = currentEditor() as? NSTextView {
+            editor.drawsBackground = false
+            editor.backgroundColor = .clear
+        }
+        return result
+    }
+}
+
+private struct TransparentTextField: NSViewRepresentable {
+    @Binding var text: String
+    let font: NSFont
+    let color: NSColor
+    var placeholder: String = ""
+    var onCommit: () -> Void = {}
+    var onCancel: () -> Void = {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> TransparentNSTextField {
+        let field = TransparentNSTextField()
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.drawsBackground = false
+        field.backgroundColor = .clear
+        field.focusRingType = .none
+        field.font = font
+        field.textColor = color
+        field.placeholderString = placeholder
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        DispatchQueue.main.async {
+            field.window?.makeFirstResponder(field)
+        }
+        return field
+    }
+
+    func updateNSView(_ nsView: TransparentNSTextField, context: Context) {
+        if nsView.stringValue != text { nsView.stringValue = text }
+        nsView.font = font
+        nsView.textColor = color
+        nsView.placeholderString = placeholder
+        context.coordinator.parent = self
+    }
+
+    class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: TransparentTextField
+        var didExplicitlyFinish = false
+        init(_ parent: TransparentTextField) { self.parent = parent }
+
+        func controlTextDidChange(_ obj: Notification) {
+            if let field = obj.object as? NSTextField {
+                parent.text = field.stringValue
+            }
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.insertNewline(_:)) {
+                didExplicitlyFinish = true
+                parent.onCommit()
+                return true
+            }
+            if selector == #selector(NSResponder.cancelOperation(_:)) {
+                didExplicitlyFinish = true
+                parent.onCancel()
+                return true
+            }
+            return false
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            if !didExplicitlyFinish {
+                parent.onCommit()
+            }
+            didExplicitlyFinish = false
         }
     }
 }

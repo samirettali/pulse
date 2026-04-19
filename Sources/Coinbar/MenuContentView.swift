@@ -17,7 +17,7 @@ struct MenuContentView: View {
                         .listRowInsets(EdgeInsets(
                             top: symbol.provider == .spacer ? 10 : 4,
                             leading: 0,
-                            bottom: symbol.provider == .spacer ? 10 : 4,
+                            bottom: symbol.provider == .spacer ? 10 : symbol.provider == .label ? 10 : 4,
                             trailing: 0
                         ))
                         .listRowBackground(Color.clear)
@@ -94,6 +94,12 @@ struct MenuContentView: View {
                                 addFailed = false
                                 isAdding = true
                             }
+                            Button("Label") {
+                                addProvider = .label
+                                addText = ""
+                                addFailed = false
+                                isAdding = true
+                            }
                             Divider()
                             Button("Separator") {
                                 store.addSpacer()
@@ -135,6 +141,16 @@ struct MenuContentView: View {
                         store.removeSymbol(id: symbol.id)
                     }
                 }
+        } else if symbol.provider == .label {
+            Text(symbol.symbol)
+                .font(AppFont.uiFont(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contextMenu {
+                    Button("Delete", role: .destructive) {
+                        store.removeSymbol(id: symbol.id)
+                    }
+                }
         } else {
             PriceRowView(
                 symbol: symbol,
@@ -155,6 +171,13 @@ struct MenuContentView: View {
     private func tryAdd() {
         let trimmed = addText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if addProvider == .label {
+            store.addLabel(text: trimmed)
+            addText = ""
+            addFailed = false
+            isAdding = false
+            return
+        }
         if store.addSymbol(provider: addProvider, rawSymbol: trimmed) {
             addText = ""
             addFailed = false

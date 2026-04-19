@@ -9,6 +9,7 @@ enum MarketProvider: String, CaseIterable, Sendable {
     case hyperliquid
     case time
     case spacer
+    case label
 
     var displayName: String {
         switch self {
@@ -20,6 +21,8 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return "Time"
         case .spacer:
             return "Spacer"
+        case .label:
+            return "Label"
         }
     }
 
@@ -29,7 +32,7 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return "BN"
         case .hyperliquid:
             return "HL"
-        case .time, .spacer:
+        case .time, .spacer, .label:
             return ""
         }
     }
@@ -40,7 +43,7 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return URL(string: "https://www.binance.com/en/trade/\(symbol)")
         case .hyperliquid:
             return URL(string: "https://app.hyperliquid.xyz/trade/\(symbol)")
-        case .time, .spacer:
+        case .time, .spacer, .label:
             return nil
         }
     }
@@ -55,6 +58,8 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return "America/New_York"
         case .spacer:
             return ""
+        case .label:
+            return "DeFi"
         }
     }
 }
@@ -115,7 +120,7 @@ struct TrackedSymbol: Identifiable, Sendable {
         switch provider {
         case .binance:
             return symbol.uppercased()
-        case .hyperliquid, .time, .spacer:
+        case .hyperliquid, .time, .spacer, .label:
             return symbol
         }
     }
@@ -137,6 +142,8 @@ struct TrackedSymbol: Identifiable, Sendable {
             return words.map { String($0.prefix(1)) }.joined().uppercased()
         case .spacer:
             return ""
+        case .label:
+            return symbol
         }
     }
 }
@@ -247,7 +254,7 @@ final class PriceStore: ObservableObject {
     }
 
     var menuBarTitle: String {
-        let visible = symbols.filter { $0.provider == .spacer || visibleSymbols.contains($0.id) }
+        let visible = symbols.filter { $0.provider == .spacer || ($0.provider != .label && visibleSymbols.contains($0.id)) }
         if visible.isEmpty { return "Coinbar" }
 
         var result = ""
@@ -355,6 +362,15 @@ final class PriceStore: ObservableObject {
         defaults.set(Array(visibleSymbols), forKey: visibleSymbolsKey)
     }
 
+    func addLabel(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let symbol = TrackedSymbol(provider: .label, symbol: trimmed)
+        guard !symbols.contains(where: { $0.id == symbol.id }) else { return }
+        symbols.append(symbol)
+        defaults.set(symbols.map(\.storageValue), forKey: symbolsKey)
+    }
+
     /// Returns true if the symbol was added, false if the token is invalid or already tracked.
     @discardableResult
     func addSymbol(provider: MarketProvider, rawSymbol: String) -> Bool {
@@ -417,7 +433,7 @@ final class PriceStore: ObservableObject {
     }
 
     private func consumeStreams() async throws {
-        let marketSymbols = symbols.filter { $0.provider != .time && $0.provider != .spacer }
+        let marketSymbols = symbols.filter { $0.provider != .time && $0.provider != .spacer && $0.provider != .label }
         let groupedByProvider = Dictionary(grouping: marketSymbols, by: \.provider)
 
         if groupedByProvider.isEmpty {

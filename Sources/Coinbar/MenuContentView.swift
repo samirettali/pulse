@@ -10,8 +10,38 @@ struct MenuContentView: View {
     @State private var draggingSymbol: TrackedSymbol?
     @State private var renamingId: String? = nil
     @State private var renameText = ""
+    @State private var showingSettings = false
 
     var body: some View {
+        ZStack(alignment: .topLeading) {
+            listView
+                .offset(x: showingSettings ? -280 : 0)
+                .animation(.easeInOut(duration: 0.2), value: showingSettings)
+
+            settingsPanel
+                .offset(x: showingSettings ? 0 : 280)
+                .animation(.easeInOut(duration: 0.2), value: showingSettings)
+        }
+        .frame(width: 260)
+        .clipped()
+        .background(WindowPositionPin())
+        .onDisappear {
+            if let id = renamingId {
+                store.renameSymbol(id: id, newName: renameText)
+                renamingId = nil
+            }
+        }
+    }
+
+    private var settingsPanel: some View {
+        SettingsView(store: store) {
+            withAnimation(.easeInOut(duration: 0.2)) { showingSettings = false }
+        }
+        .padding(14)
+        .frame(width: 260, alignment: .topLeading)
+    }
+
+    private var listView: some View {
         VStack(alignment: .leading, spacing: 0) {
             List {
                 ForEach(store.symbols) { symbol in
@@ -61,7 +91,7 @@ struct MenuContentView: View {
                     .listRowSeparator(.hidden)
                 }
 
-                HStack {
+HStack {
                     if isAdding {
                         Button {
                             isAdding = false
@@ -118,6 +148,22 @@ struct MenuContentView: View {
                             if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                         }
                     }
+
+                    Spacer()
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showingSettings.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showingSettings ? "gearshape.fill" : "gearshape")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { inside in
+                        if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                    }
                 }
                 .listRowInsets(EdgeInsets(top: 16, leading: 0, bottom: 0, trailing: 0))
                 .listRowBackground(Color.clear)
@@ -130,14 +176,6 @@ struct MenuContentView: View {
         }
         .padding(14)
         .frame(width: 260)
-        .onAppear { store.isMenuOpen = true }
-        .onDisappear {
-            store.isMenuOpen = false
-            if let id = renamingId {
-                store.renameSymbol(id: id, newName: renameText)
-                renamingId = nil
-            }
-        }
     }
 
     @ViewBuilder
@@ -399,6 +437,55 @@ private struct TransparentTextField: NSViewRepresentable {
                 parent.onCommit()
             }
             didExplicitlyFinish = false
+        }
+    }
+}
+
+private struct WindowPositionPin: NSViewRepresentable {
+    func makeNSView(context: Context) -> PinView { PinView() }
+    func updateNSView(_ nsView: PinView, context: Context) {}
+
+    class PinView: NSView {
+        private var moveObserver: NSObjectProtocol?
+        private var showObserver: NSObjectProtocol?
+        private var pinnedOrigin: NSPoint?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            teardown()
+            guard let window else { return }
+
+            showObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                guard let self, let window else { return }
+                MainActor.assumeIsolated { self.pinnedOrigin = nil }
+                DispatchQueue.main.async { [weak self, weak window] in
+                    guard let self, let window else { return }
+                    MainActor.assumeIsolated { self.pinnedOrigin = window.frame.origin }
+                }
+            }
+
+            moveObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didMoveNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                guard let self, let window else { return }
+                let origin = MainActor.assumeIsolated { self.pinnedOrigin }
+                guard let origin else { return }
+                MainActor.assumeIsolated { window.setFrameOrigin(origin) }
+            }
+        }
+
+        private func teardown() {
+            if let o = moveObserver { NotificationCenter.default.removeObserver(o) }
+            if let o = showObserver { NotificationCenter.default.removeObserver(o) }
+            moveObserver = nil
+            showObserver = nil
+            pinnedOrigin = nil
         }
     }
 }

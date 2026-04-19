@@ -10,7 +10,7 @@ struct CoinbarApp: App {
         MenuBarExtra {
             MenuContentView(store: priceStore)
         } label: {
-            Text(priceStore.frozenMenuBarTitle ?? priceStore.menuBarTitle)
+            Text(priceStore.menuBarTitle)
                 .font(AppFont.uiFont(size: 13, weight: .medium))
                 .contextMenu {
                     Button("Reconnect") { priceStore.restart() }
@@ -18,6 +18,7 @@ struct CoinbarApp: App {
                 }
         }
         .menuBarExtraStyle(.window)
+
     }
 }
 

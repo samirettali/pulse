@@ -223,23 +223,17 @@ final class PriceStore: ObservableObject {
     private let symbolsKey = "trackedSymbols"
     private let visibleSymbolsKey = "visibleMenuBarSymbols"
     private let customNamesKey = "customNames"
+    private let menuBarSeparatorKey = "menuBarSeparator"
+    private let menuBarPaddingKey = "menuBarPadding"
     @Published private(set) var customNames: [String: String] = [:]
+    @Published private(set) var menuBarSeparator: String = ""
+    @Published private(set) var menuBarPadding: Int = 1
 
     private var streamTask: Task<Void, Never>?
     private var clockTask: Task<Void, Never>?
     private var resolvedBinanceMarkets: [String: BinanceMarket] = [:]
     private var xyzPerpPrevDayPrices: [String: Double] = [:]
     @Published private(set) var now = Date()
-    @Published var isMenuOpen = false {
-        didSet {
-            if isMenuOpen {
-                frozenMenuBarTitle = menuBarTitle
-            } else {
-                frozenMenuBarTitle = nil
-            }
-        }
-    }
-    private(set) var frozenMenuBarTitle: String? = nil
 
     init(symbols: [TrackedSymbol]) {
         let persisted = Self.loadSymbols(defaults: UserDefaults.standard, key: symbolsKey)
@@ -251,6 +245,8 @@ final class PriceStore: ObservableObject {
             ? Set(resolvedSymbols.prefix(2).map { $0.id })
             : persistedVisible.intersection(Set(resolvedSymbols.map { $0.id }))
         self.customNames = (defaults.dictionary(forKey: customNamesKey) as? [String: String]) ?? [:]
+        self.menuBarSeparator = defaults.string(forKey: menuBarSeparatorKey) ?? ""
+        self.menuBarPadding = defaults.object(forKey: menuBarPaddingKey) != nil ? defaults.integer(forKey: menuBarPaddingKey) : 1
 
         start()
 
@@ -258,6 +254,21 @@ final class PriceStore: ObservableObject {
 
     func displayName(for symbol: TrackedSymbol) -> String {
         customNames[symbol.id] ?? symbol.displayName
+    }
+
+    func setMenuBarSeparator(_ separator: String) {
+        menuBarSeparator = separator
+        defaults.set(separator, forKey: menuBarSeparatorKey)
+    }
+
+    func setMenuBarPadding(_ padding: Int) {
+        menuBarPadding = max(0, padding)
+        defaults.set(menuBarPadding, forKey: menuBarPaddingKey)
+    }
+
+    private var menuBarJoinString: String {
+        let pad = String(repeating: " ", count: menuBarPadding)
+        return menuBarSeparator.isEmpty ? pad : pad + menuBarSeparator + pad
     }
 
     func renameSymbol(id: String, newName: String) {
@@ -296,7 +307,7 @@ final class PriceStore: ObservableObject {
             } else if pendingSpacer {
                 result += String(repeating: " ", count: 6) + text
             } else {
-                result += " | \(text)"
+                result += menuBarJoinString + text
             }
             pendingSpacer = false
         }

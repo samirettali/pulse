@@ -11,6 +11,12 @@ rm -rf "$EXPORT_DIR" "$DERIVED_DATA_DIR"
 mkdir -p "$EXPORT_DIR"
 
 xcodebuild \
+  -resolvePackageDependencies \
+  -project "$ROOT_DIR/Coinbar.xcodeproj" \
+  -scheme Pulse \
+  -derivedDataPath "$DERIVED_DATA_DIR"
+
+xcodebuild \
   -project "$ROOT_DIR/Coinbar.xcodeproj" \
   -scheme Pulse \
   -configuration Release \

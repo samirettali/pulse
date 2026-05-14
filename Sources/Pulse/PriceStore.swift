@@ -9,6 +9,7 @@ private let hyperliquidLogger = Logger(subsystem: "crypto-tracker", category: "h
 enum MarketProvider: String, CaseIterable, Sendable {
     case binance
     case hyperliquid
+    case yahoo
     case time
     case spacer
     case label
@@ -19,6 +20,8 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return "Binance"
         case .hyperliquid:
             return "Hyperliquid"
+        case .yahoo:
+            return "Yahoo"
         case .time:
             return "Time"
         case .spacer:
@@ -34,6 +37,8 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return "BN"
         case .hyperliquid:
             return "HL"
+        case .yahoo:
+            return "YH"
         case .time, .spacer, .label:
             return ""
         }
@@ -45,6 +50,9 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return URL(string: "https://www.binance.com/en/trade/\(symbol)")
         case .hyperliquid:
             return URL(string: "https://app.hyperliquid.xyz/trade/\(symbol)")
+        case .yahoo:
+            let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
+            return URL(string: "https://finance.yahoo.com/quote/\(encodedSymbol)")
         case .time, .spacer, .label:
             return nil
         }
@@ -56,6 +64,8 @@ enum MarketProvider: String, CaseIterable, Sendable {
             return "BTCUSDT"
         case .hyperliquid:
             return "BTC or xyz:CL"
+        case .yahoo:
+            return "AAPL or BTC-USD"
         case .time:
             return "America/New_York"
         case .spacer:
@@ -120,7 +130,7 @@ struct TrackedSymbol: Identifiable, Sendable {
 
     private static func normalizedSymbol(_ symbol: String, for provider: MarketProvider) -> String {
         switch provider {
-        case .binance:
+        case .binance, .yahoo:
             return symbol.uppercased()
         case .hyperliquid, .time, .spacer, .label:
             return symbol
@@ -135,6 +145,14 @@ struct TrackedSymbol: Identifiable, Sendable {
             }
             return symbol
         case .hyperliquid:
+            return symbol
+        case .yahoo:
+            if symbol.hasSuffix("-USD") {
+                return String(symbol.dropLast(4))
+            }
+            if symbol.hasSuffix("=X") {
+                return String(symbol.dropLast(2))
+            }
             return symbol
         case .time:
             let city = symbol.split(separator: "/").last
@@ -581,6 +599,12 @@ final class PriceStore: ObservableObject {
                 }
             }
 
+            if let yahooSymbols = groupedByProvider[.yahoo], !yahooSymbols.isEmpty {
+                group.addTask {
+                    try await self.consumeYahooStream(for: yahooSymbols)
+                }
+            }
+
             try await group.waitForAll()
         }
     }
@@ -706,6 +730,18 @@ final class PriceStore: ObservableObject {
         )
     }
 
+    private func consumeYahooStream(for trackedSymbols: [TrackedSymbol]) async throws {
+        let trackedBySymbol = Dictionary(uniqueKeysWithValues: trackedSymbols.map { ($0.symbol, $0) })
+        try await Self.consumeYahooStream(symbols: trackedSymbols.map(\.symbol)) { payload in
+            await MainActor.run {
+                guard let trackedSymbol = trackedBySymbol[payload.symbol] else {
+                    return
+                }
+                self.updatePrice(for: trackedSymbol, price: payload.price, changePercent: payload.changePercent)
+            }
+        }
+    }
+
     private func updatePrice(for trackedSymbol: TrackedSymbol, price: Double, changePercent: Double) {
         prices[trackedSymbol.id] = PriceSnapshot(
             symbol: trackedSymbol.symbol,
@@ -821,6 +857,60 @@ final class PriceStore: ObservableObject {
             }
             try await group.waitForAll()
         }
+    }
+
+    private static func consumeYahooStream(
+        symbols: [String],
+        onPayload: @escaping @Sendable (YahooTickerPayload) async -> Void
+    ) async throws {
+        let streamURL = URL(string: "wss://streamer.finance.yahoo.com/")!
+        let task = URLSession.shared.webSocketTask(with: streamURL)
+        task.resume()
+
+        defer {
+            task.cancel(with: .goingAway, reason: nil)
+        }
+
+        let subscriptionData = try JSONSerialization.data(withJSONObject: ["subscribe": symbols])
+        guard let subscription = String(data: subscriptionData, encoding: .utf8) else {
+            throw URLError(.cannotParseResponse)
+        }
+        try await task.send(.string(subscription))
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                while !Task.isCancelled {
+                    let message = try await task.receive()
+                    if let payload = try Self.decodeYahooPayload(from: message) {
+                        await onPayload(payload)
+                    }
+                }
+            }
+            group.addTask {
+                try await Self.pingLoop(task: task)
+            }
+            try await group.waitForAll()
+        }
+    }
+
+    private nonisolated static func decodeYahooPayload(from message: URLSessionWebSocketTask.Message) throws -> YahooTickerPayload? {
+        let encoded: String
+        switch message {
+        case .string(let value):
+            encoded = value
+        case .data(let data):
+            guard let value = String(data: data, encoding: .utf8) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            encoded = value
+        @unknown default:
+            throw URLError(.cannotParseResponse)
+        }
+
+        guard let protobufData = Data(base64Encoded: encoded) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        return try YahooTickerPayload(protobufData: protobufData)
     }
 
     private nonisolated static func decodeTickerPayload(from message: URLSessionWebSocketTask.Message) throws -> BinanceCombinedTicker {
@@ -1119,6 +1209,140 @@ private struct HyperliquidAssetContext: Decodable {
 private struct HyperliquidWebSocketMessage {
     let channel: String?
     let data: [String: String]?
+}
+
+private struct YahooTickerPayload: Sendable {
+    let symbol: String
+    let price: Double
+    let changePercent: Double
+
+    init?(protobufData data: Data) throws {
+        var reader = ProtobufReader(data: data)
+        var symbol: String?
+        var price: Double?
+        var changePercent: Double?
+
+        while !reader.isAtEnd {
+            let key = try reader.readVarint()
+            let fieldNumber = Int(key >> 3)
+            let wireType = Int(key & 0x7)
+
+            switch (fieldNumber, wireType) {
+            case (1, 2):
+                symbol = try reader.readString()
+            case (2, 5):
+                price = Double(try reader.readFloat())
+            case (8, 5):
+                changePercent = Double(try reader.readFloat())
+            default:
+                try reader.skipField(wireType: wireType)
+            }
+        }
+
+        guard let symbol, let price else {
+            return nil
+        }
+
+        self.symbol = symbol
+        self.price = price
+        self.changePercent = changePercent ?? 0
+    }
+}
+
+private struct ProtobufReader {
+    private let bytes: [UInt8]
+    private var index = 0
+
+    var isAtEnd: Bool {
+        index >= bytes.count
+    }
+
+    init(data: Data) {
+        self.bytes = Array(data)
+    }
+
+    mutating func readVarint() throws -> UInt64 {
+        var result: UInt64 = 0
+        var shift: UInt64 = 0
+
+        while shift < 64 {
+            guard index < bytes.count else {
+                throw URLError(.cannotParseResponse)
+            }
+
+            let byte = bytes[index]
+            index += 1
+            result |= UInt64(byte & 0x7f) << shift
+
+            if byte & 0x80 == 0 {
+                return result
+            }
+
+            shift += 7
+        }
+
+        throw URLError(.cannotParseResponse)
+    }
+
+    mutating func readString() throws -> String {
+        let data = try readLengthDelimitedData()
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        return string
+    }
+
+    mutating func readFloat() throws -> Float {
+        let bitPattern = try readFixed32()
+        return Float(bitPattern: bitPattern)
+    }
+
+    mutating func skipField(wireType: Int) throws {
+        switch wireType {
+        case 0:
+            _ = try readVarint()
+        case 1:
+            try skipBytes(8)
+        case 2:
+            let length = Int(try readVarint())
+            try skipBytes(length)
+        case 5:
+            try skipBytes(4)
+        default:
+            throw URLError(.cannotParseResponse)
+        }
+    }
+
+    private mutating func readLengthDelimitedData() throws -> Data {
+        let length = Int(try readVarint())
+        guard length >= 0, index + length <= bytes.count else {
+            throw URLError(.cannotParseResponse)
+        }
+
+        let start = index
+        index += length
+        return Data(bytes[start..<index])
+    }
+
+    private mutating func readFixed32() throws -> UInt32 {
+        guard index + 4 <= bytes.count else {
+            throw URLError(.cannotParseResponse)
+        }
+
+        let value = UInt32(bytes[index])
+            | (UInt32(bytes[index + 1]) << 8)
+            | (UInt32(bytes[index + 2]) << 16)
+            | (UInt32(bytes[index + 3]) << 24)
+        index += 4
+        return value
+    }
+
+    private mutating func skipBytes(_ count: Int) throws {
+        guard count >= 0, index + count <= bytes.count else {
+            throw URLError(.cannotParseResponse)
+        }
+        index += count
+    }
 }
 
 private enum PriceFormatter {

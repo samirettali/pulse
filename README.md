@@ -11,6 +11,7 @@ Minimal macOS menu bar app for live crypto prices, timezones, and custom labels.
 ### Multiple data sources
 - **Binance** — spot and futures pairs (auto-detected), e.g. `BTCUSDT`, `ETHUSDT`
 - **Hyperliquid** — perps and spot pairs, including `xyz:` aliases e.g. `BTC`, `xyz:TSLA`
+- **Yahoo Finance** — stocks, ETFs, indexes, forex, commodities, and crypto e.g. `AAPL`, `^GSPC`, `EURUSD=X`, `BTC-USD`
 - **Timezone clocks** — any IANA timezone, e.g. `America/New_York`
 
 ### Item types
@@ -27,10 +28,11 @@ Minimal macOS menu bar app for live crypto prices, timezones, and custom labels.
 - **Add items** via the `+` button at the bottom:
   - Binance pair
   - Hyperliquid pair
+  - Yahoo symbol
   - Timezone
   - Label
   - Separator
-- Click a price row to open it in the browser (Binance or Hyperliquid)
+- Click a price row to open it in the browser (Binance, Hyperliquid, or Yahoo Finance)
 
 ### Settings
 Access via the gear icon at the bottom of the popup.

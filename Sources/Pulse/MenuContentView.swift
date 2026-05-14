@@ -120,6 +120,12 @@ HStack {
                                 addFailed = false
                                 isAdding = true
                             }
+                            Button("Yahoo Symbol") {
+                                addProvider = .yahoo
+                                addText = ""
+                                addFailed = false
+                                isAdding = true
+                            }
                             Button("Timezone") {
                                 addProvider = .time
                                 addText = ""

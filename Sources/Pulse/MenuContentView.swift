@@ -23,6 +23,7 @@ struct MenuContentView: View {
                 .animation(.easeInOut(duration: 0.2), value: showingSettings)
         }
         .frame(width: 260)
+        .fixedSize(horizontal: false, vertical: true)
         .clipped()
         .background(WindowPositionPin())
         .onDisappear {
@@ -43,55 +44,47 @@ struct MenuContentView: View {
 
     private var listView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            List {
-                ForEach(store.symbols) { symbol in
-                    rowView(for: symbol)
-                        .listRowInsets(EdgeInsets(
-                            top: symbol.provider == .spacer ? 2 : 4,
-                            leading: 0,
-                            bottom: symbol.provider == .spacer ? 2 : 4,
-                            trailing: 0
-                        ))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .opacity(draggingSymbol?.id == symbol.id ? 0.4 : 1)
-                        .onDrag({
-                            draggingSymbol = symbol
-                            return NSItemProvider(object: symbol.id as NSString)
-                        }, preview: {
-                            Color.clear.frame(width: 1, height: 1)
-                        })
-                        .onDrop(of: [.text], delegate: ReorderDropDelegate(
-                            target: symbol,
-                            store: store,
-                            dragging: $draggingSymbol
-                        ))
-                }
+            ForEach(store.symbols) { symbol in
+                rowView(for: symbol)
+                    .padding(.top, symbol.provider == .spacer ? 2 : 4)
+                    .padding(.bottom, symbol.provider == .spacer ? 2 : 4)
+                    .opacity(draggingSymbol?.id == symbol.id ? 0.4 : 1)
+                    .onDrag({
+                        draggingSymbol = symbol
+                        return NSItemProvider(object: symbol.id as NSString)
+                    }, preview: {
+                        Color.clear.frame(width: 1, height: 1)
+                    })
+                    .onDrop(of: [.text], delegate: ReorderDropDelegate(
+                        target: symbol,
+                        store: store,
+                        dragging: $draggingSymbol
+                    ))
+            }
 
-                if isAdding {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            TextField(addProvider.symbolPlaceholder, text: $addText)
-                                .font(AppFont.uiFont(size: 12))
-                                .textFieldStyle(.roundedBorder)
-                                .onSubmit { tryAdd() }
+            if isAdding {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        TextField(addProvider.symbolPlaceholder, text: $addText)
+                            .font(AppFont.uiFont(size: 12))
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { tryAdd() }
 
-                            Button("Add") { tryAdd() }
-                                .disabled(addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-
-                        if addFailed {
-                            Text("Invalid \(addProvider.displayName) symbol")
-                                .font(AppFont.uiFont(size: 11))
-                                .foregroundStyle(.red)
-                        }
+                        Button("Add") { tryAdd() }
+                            .disabled(addText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 4, trailing: 0))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                }
 
-HStack {
+                    if addFailed {
+                        Text("Invalid \(addProvider.displayName) symbol")
+                            .font(AppFont.uiFont(size: 11))
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+            }
+
+            HStack {
                     if isAdding {
                         Button {
                             isAdding = false
@@ -171,17 +164,11 @@ HStack {
                         if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                     }
                 }
-                .listRowInsets(EdgeInsets(top: 16, leading: 0, bottom: 0, trailing: 0))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-
-            }
-            .listStyle(.plain)
-            .scrollDisabled(true)
-            .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 16)
         }
         .padding(14)
-        .frame(width: 260)
+        .frame(width: 260, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -449,7 +436,9 @@ private struct TransparentTextField: NSViewRepresentable {
 
 private struct WindowPositionPin: NSViewRepresentable {
     func makeNSView(context: Context) -> PinView { PinView() }
-    func updateNSView(_ nsView: PinView, context: Context) {}
+    func updateNSView(_ nsView: PinView, context: Context) {
+        nsView.updateWindowSizeAndPinSoon()
+    }
 
     class PinView: NSView {
         private var moveObserver: NSObjectProtocol?
@@ -501,6 +490,33 @@ private struct WindowPositionPin: NSViewRepresentable {
                 forName: NSWindow.didResizeNotification,
                 object: window, queue: .main
             ) { _ in applyPin() }
+        }
+
+        func updateWindowSizeAndPinSoon() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window, let contentView = window.contentView else { return }
+                MainActor.assumeIsolated {
+                    contentView.layoutSubtreeIfNeeded()
+                    let fittingSize = contentView.fittingSize
+                    guard fittingSize.width > 0, fittingSize.height > 0 else { return }
+
+                    let oldFrame = window.frame
+                    let newSize = NSSize(width: ceil(fittingSize.width), height: ceil(fittingSize.height))
+                    guard abs(oldFrame.width - newSize.width) > 0.5 || abs(oldFrame.height - newSize.height) > 0.5 else {
+                        return
+                    }
+
+                    let topLeft = self.pinnedTopLeft ?? NSPoint(x: oldFrame.minX, y: oldFrame.maxY)
+                    self.pinnedTopLeft = topLeft
+                    let newFrame = NSRect(
+                        x: topLeft.x,
+                        y: topLeft.y - newSize.height,
+                        width: newSize.width,
+                        height: newSize.height
+                    )
+                    window.setFrame(newFrame, display: true)
+                }
+            }
         }
 
         private func teardown() {

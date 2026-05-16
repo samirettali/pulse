@@ -731,8 +731,21 @@ final class PriceStore: ObservableObject {
     }
 
     private func consumeYahooStream(for trackedSymbols: [TrackedSymbol]) async throws {
+        let symbols = trackedSymbols.map(\.symbol)
         let trackedBySymbol = Dictionary(uniqueKeysWithValues: trackedSymbols.map { ($0.symbol, $0) })
-        try await Self.consumeYahooStream(symbols: trackedSymbols.map(\.symbol)) { payload in
+
+        if let snapshots = try? await Self.fetchYahooQuoteSnapshots(symbols: symbols) {
+            await MainActor.run {
+                for snapshot in snapshots {
+                    guard let trackedSymbol = trackedBySymbol[snapshot.symbol] else {
+                        continue
+                    }
+                    self.updatePrice(for: trackedSymbol, price: snapshot.price, changePercent: snapshot.changePercent)
+                }
+            }
+        }
+
+        try await Self.consumeYahooStream(symbols: symbols) { payload in
             await MainActor.run {
                 guard let trackedSymbol = trackedBySymbol[payload.symbol] else {
                     return
@@ -783,6 +796,67 @@ final class PriceStore: ObservableObject {
         }
 
         throw URLError(.unsupportedURL)
+    }
+
+    private static func fetchYahooQuoteSnapshots(symbols: [String]) async throws -> [YahooQuoteSnapshot] {
+        guard !symbols.isEmpty else {
+            return []
+        }
+
+        return try await withThrowingTaskGroup(of: YahooQuoteSnapshot?.self) { group in
+            for symbol in symbols {
+                group.addTask {
+                    try await Self.fetchYahooChartSnapshot(symbol: symbol)
+                }
+            }
+
+            var snapshots: [YahooQuoteSnapshot] = []
+            for try await snapshot in group {
+                if let snapshot {
+                    snapshots.append(snapshot)
+                }
+            }
+            return snapshots
+        }
+    }
+
+    private static func fetchYahooChartSnapshot(symbol: String) async throws -> YahooQuoteSnapshot? {
+        let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
+        var components = URLComponents(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(encodedSymbol)")
+        components?.queryItems = [
+            URLQueryItem(name: "range", value: "5d"),
+            URLQueryItem(name: "interval", value: "1d"),
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+
+        let envelope = try JSONDecoder().decode(YahooChartResponseEnvelope.self, from: data)
+        guard let result = envelope.chart.result?.first else {
+            return nil
+        }
+
+        let price = result.meta.regularMarketPrice ?? result.lastClose
+        guard let price else {
+            return nil
+        }
+
+        let previousClose = result.meta.previousClose ?? result.meta.chartPreviousClose
+        let changePercent = previousClose.flatMap { previous in
+            previous > 0 ? ((price - previous) / previous) * 100 : nil
+        } ?? 0
+
+        return YahooQuoteSnapshot(symbol: result.meta.symbol ?? symbol, price: price, changePercent: changePercent)
     }
 
     private func symbolExists(_ symbol: String, in market: BinanceMarket) async throws -> Bool {
@@ -1209,6 +1283,53 @@ private struct HyperliquidAssetContext: Decodable {
 private struct HyperliquidWebSocketMessage {
     let channel: String?
     let data: [String: String]?
+}
+
+private struct YahooQuoteSnapshot: Sendable {
+    let symbol: String
+    let price: Double
+    let changePercent: Double
+}
+
+private struct YahooChartResponseEnvelope: Decodable {
+    let chart: YahooChartResponse
+}
+
+private struct YahooChartResponse: Decodable {
+    let result: [YahooChartResult]?
+}
+
+private struct YahooChartResult: Decodable {
+    let meta: YahooChartMeta
+    let indicators: YahooChartIndicators?
+
+    var lastClose: Double? {
+        guard let closeValues = indicators?.quote.first?.close else {
+            return nil
+        }
+
+        for close in closeValues.reversed() {
+            if let close {
+                return close
+            }
+        }
+        return nil
+    }
+}
+
+private struct YahooChartMeta: Decodable {
+    let symbol: String?
+    let regularMarketPrice: Double?
+    let previousClose: Double?
+    let chartPreviousClose: Double?
+}
+
+private struct YahooChartIndicators: Decodable {
+    let quote: [YahooChartQuote]
+}
+
+private struct YahooChartQuote: Decodable {
+    let close: [Double?]
 }
 
 private struct YahooTickerPayload: Sendable {

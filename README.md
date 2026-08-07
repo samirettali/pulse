@@ -40,8 +40,25 @@ Access via the gear icon at the bottom of the popup.
 - **Separator** — character shown between items in the menu bar (default: none)
 - **Padding** — number of spaces on each side of the separator (default: 1)
 
-## Running
+## Install
 
-```bash
-swift run
+Download the DMG from the [releases page](../../releases) and drag Pulse to
+Applications. It's signed and notarised, so it opens without any warning.
+
+Requires macOS 14 or later. Settings live in `~/.config/pulse/config.yaml`.
+
+## Development
+
+Plain SwiftPM, no Xcode project.
+
+```sh
+make bundle   # build and assemble dist/Pulse.app
+make run      # the same, then launch it
+make dev      # unoptimised build, replaces the running copy
+make release  # signed, notarised, stapled DMG
 ```
+
+`swift run` still works for a quick check, but it runs a bare executable rather
+than the `.app`, so the menu bar item behaves slightly differently. See
+`AGENTS.md` for how signing, notarisation and the rest of the pipeline fit
+together.
